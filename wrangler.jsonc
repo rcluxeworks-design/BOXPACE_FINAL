@@ -1,0 +1,21 @@
+{
+  // Must match the name of the Worker in the Cloudflare dashboard so Git deployments update it.
+  "name": "boxpace-final",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-01-01",
+
+  // The website. Only /api/* runs Worker code first; pages, images and styles are served straight from this folder.
+  "assets": {
+    "directory": "./website",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // Hourly OTA calendar refresh (UTC).
+  "triggers": { "crons": ["0 * * * *"] },
+
+  // Keep any variables you add in the dashboard when this file deploys. Add keys as Secrets, never in this file.
+  "keep_vars": true,
+
+  "observability": { "enabled": true }
+}

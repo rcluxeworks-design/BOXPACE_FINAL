@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler pages dev website --compatibility-date=2026-01-01",
+    "dev": "wrangler dev",
     "test": "node test/run.mjs"
   },
   "devDependencies": {

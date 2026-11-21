@@ -11,6 +11,7 @@ import { onRequest as bookings } from "../functions/api/booking-manager.js";
 import { onRequest as channels } from "../functions/api/channel-manager.js";
 import { onRequest as otaCalendar } from "../functions/api/ota-calendar.js";
 import { onRequest as calendarRefresh } from "../functions/api/calendar-refresh.js";
+import worker, { refreshStalestCalendars } from "../src/worker.js";
 
 // ---------- fake Supabase ----------
 const rows = new Map(); // "namespace|key" -> { namespace, record_key, payload }
@@ -277,6 +278,31 @@ await test("invalid Desk data is rejected", async () => {
   assert.equal((await call(deskSync, "/api/desk-sync", { method: "PUT", password: PW, body: "{not json" })).status, 400);
   assert.equal((await call(deskSync, "/api/desk-sync", { method: "PUT", password: PW, body: { state: { leads: [] } } })).status, 400);
   assert.equal((await call(deskSync, "/api/desk-sync", { method: "PUT", password: PW, body: { state: { ...baseState, properties: [{ id: "../x" }] } } })).status, 400);
+});
+
+await test("Worker routes /api/* to handlers, unknown /api/* to 404, everything else to the website files", async () => {
+  const assets = { fetch: async (req) => new Response(`asset:${new URL(req.url).pathname}`) };
+  const w = (path, init) => worker.fetch(new Request(`https://site.test${path}`, init), { ...env, ASSETS: assets }, {});
+  assert.equal((await w("/api/properties")).status, 200);
+  assert.equal((await w("/api/properties/")).status, 200);
+  assert.equal((await w("/api/unknown")).status, 404);
+  assert.equal(await (await w("/properties")).text(), "asset:/properties");
+  assert.equal(await (await w("/")).text(), "asset:/");
+});
+
+await test("hourly job refreshes the longest-unsynced properties first and survives missing settings", async () => {
+  assert.deepEqual(await refreshStalestCalendars({}), []);
+  const mk = (id) => ({ id, name: id, status: "Published", availability: {} });
+  const st = { ...baseState, properties: ["p-a", "p-b", "p-c"].map(mk) };
+  await call(deskSync, "/api/desk-sync", { method: "PUT", password: PW, body: { state: st } });
+  airbnbFeed = "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n";
+  for (const id of ["p-a", "p-b", "p-c"]) await call(channels, "/api/channel-manager", { method: "POST", password: PW, body: { action: "configure", propertyId: id, feeds: [{ label: "Airbnb", url: `https://www.airbnb.com/calendar/ical/${id}.ics` }] } });
+  // make p-b the stalest
+  rows.get("boxpace-hospitality|channel-state:p-b").payload.lastSyncAt = "2000-01-01T00:00:00.000Z";
+  const before = rows.get("boxpace-hospitality|channel-state:p-b").payload.lastSyncAt;
+  const results = await refreshStalestCalendars(env, 1);
+  assert.deepEqual(results.map((r) => r.id), ["p-b"]);
+  assert.notEqual(rows.get("boxpace-hospitality|channel-state:p-b").payload.lastSyncAt, before);
 });
 
 server.close();
